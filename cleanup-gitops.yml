@@ -145,7 +145,7 @@
       ignore_errors: true
       tags: ['community-argocd']
 
-    - name: "Delete OperatorGroups in namespaces with community ArgoCD subs"
+    - name: "Get OperatorGroups in namespaces with community ArgoCD subs"
       kubernetes.core.k8s_info:
         kubeconfig: "{{ ocp_kubeconfig }}"
         api_version: operators.coreos.com/v1
@@ -162,9 +162,9 @@
         state: absent
         api_version: operators.coreos.com/v1
         kind: OperatorGroup
-        namespace: "{{ item.0.metadata.namespace }}"
-        name: "{{ item.1.metadata.name }}"
-      loop: "{{ query('subelements', community_og_query.results, 'resources') }}"
+        namespace: "{{ item.metadata.namespace }}"
+        name: "{{ item.metadata.name }}"
+      loop: "{{ community_og_query.results | map(attribute='resources') | list | flatten(levels=1) }}"
       when: community_argocd_subs | length > 0
       ignore_errors: true
       tags: ['community-argocd']
