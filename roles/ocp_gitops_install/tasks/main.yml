@@ -1,4 +1,7 @@
 ---
+###########################################################################
+# Ensure operator namespace exists (where Subscription lives)
+###########################################################################
 - name: "Ensure operator namespace '{{ ocp_gitops_operator_namespace }}' exists"
   kubernetes.core.k8s:
     kubeconfig: "{{ ocp_kubeconfig }}"
@@ -9,18 +12,8 @@
       metadata:
         name: "{{ ocp_gitops_operator_namespace }}"
 
-- name: "Ensure GitOps instance namespace '{{ ocp_gitops_instance_namespace }}' exists"
-  kubernetes.core.k8s:
-    kubeconfig: "{{ ocp_kubeconfig }}"
-    state: present
-    definition:
-      apiVersion: v1
-      kind: Namespace
-      metadata:
-        name: "{{ ocp_gitops_instance_namespace }}"
-
 ###########################################################################
-# OperatorGroup
+# OperatorGroup (in operator namespace)
 ###########################################################################
 - name: "Create OperatorGroup for GitOps operator"
   kubernetes.core.k8s:
@@ -33,11 +26,10 @@
         name: gitops-operator-group
         namespace: "{{ ocp_gitops_operator_namespace }}"
       spec:
-        targetNamespaces:
-          - "{{ ocp_gitops_instance_namespace }}"
+        targetNamespaces: []  # empty = cluster-wide (recommended for GitOps)
 
 ###########################################################################
-# Subscription
+# Subscription for OpenShift GitOps operator
 ###########################################################################
 - name: "Subscribe to OpenShift GitOps operator"
   kubernetes.core.k8s:
@@ -57,7 +49,7 @@
         installPlanApproval: Automatic
 
 ###########################################################################
-# Wait for operator CSV (normal run) / inspect (check mode)
+# Wait for operator CSV (normal run) / inspect in check mode
 ###########################################################################
 - name: "Wait for GitOps operator CSV to be Succeeded"
   kubernetes.core.k8s_info:
@@ -97,56 +89,76 @@
   changed_when: false
 
 ###########################################################################
-# Optional admin password secret
+# Wait for operator to create the default namespace 'openshift-gitops'
 ###########################################################################
-- name: "Create custom Argo CD admin password secret (optional)"
-  when: ocp_gitops_admin_password | length > 0
-  kubernetes.core.k8s:
+- name: "Wait for default GitOps namespace '{{ ocp_gitops_instance_namespace }}' to be created by operator"
+  kubernetes.core.k8s_info:
     kubeconfig: "{{ ocp_kubeconfig }}"
-    state: present
-    definition:
-      apiVersion: v1
-      kind: Secret
-      metadata:
-        name: "{{ ocp_gitops_instance_name }}-cluster"
-        namespace: "{{ ocp_gitops_instance_namespace }}"
-        labels:
-          app.kubernetes.io/part-of: openshift-gitops
-          app.kubernetes.io/name: openshift-gitops-argocd
-      type: Opaque
-      stringData:
-        admin.password: "{{ ocp_gitops_admin_password }}"
+    api_version: v1
+    kind: Namespace
+    name: "{{ ocp_gitops_instance_namespace }}"
+  register: ocp_gitops_ns_info
+  retries: "{{ ocp_gitops_wait_retries }}"
+  delay: "{{ ocp_gitops_wait_delay }}"
+  until: ocp_gitops_ns_info.resources | length > 0
+  when: not ansible_check_mode
+
+- name: "Check mode: show if default GitOps namespace exists"
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ ocp_kubeconfig }}"
+    api_version: v1
+    kind: Namespace
+    name: "{{ ocp_gitops_instance_namespace }}"
+  register: ocp_gitops_ns_info_check
+  when: ansible_check_mode
+  changed_when: false
+
+- name: "Check mode: print namespace existence info"
+  ansible.builtin.debug:
+    msg: >-
+      Namespace '{{ ocp_gitops_instance_namespace }}' exists:
+      {{ (ocp_gitops_ns_info_check.resources | length) > 0 }}
+  when: ansible_check_mode
+  changed_when: false
 
 ###########################################################################
-# ArgoCD instance
+# Wait for default ArgoCD instance (created automatically by operator)
 ###########################################################################
-- name: "Create OpenShift GitOps ArgoCD instance"
-  kubernetes.core.k8s:
+- name: "Wait for default Argo CD instance '{{ ocp_gitops_instance_name }}' in '{{ ocp_gitops_instance_namespace }}'"
+  kubernetes.core.k8s_info:
     kubeconfig: "{{ ocp_kubeconfig }}"
-    state: present
-    definition:
-      apiVersion: argoproj.io/v1beta1
-      kind: ArgoCD
-      metadata:
-        name: "{{ ocp_gitops_instance_name }}"
-        namespace: "{{ ocp_gitops_instance_namespace }}"
-      spec:
-        server:
-          route:
-            enabled: true   # Expose Argo CD UI via OpenShift Route
-        grafana:
-          enabled: true
-        prometheus:
-          enabled: true
-        applicationSet:
-          enabled: true
-        repo:
-          volumeMounts: []
-        resourceExclusions: []
-        kustomizeBuildOptions: ""
+    api_version: argoproj.io/v1beta1
+    kind: ArgoCD
+    namespace: "{{ ocp_gitops_instance_namespace }}"
+    name: "{{ ocp_gitops_instance_name }}"
+  register: ocp_gitops_argocd_info
+  retries: "{{ ocp_gitops_wait_retries }}"
+  delay: "{{ ocp_gitops_wait_delay }}"
+  until: ocp_gitops_argocd_info.resources | length > 0
+  when: not ansible_check_mode
+
+- name: "Check mode: look for default Argo CD instance (no wait)"
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ ocp_kubeconfig }}"
+    api_version: argoproj.io/v1beta1
+    kind: ArgoCD
+    namespace: "{{ ocp_gitops_instance_namespace }}"
+    name: "{{ ocp_gitops_instance_name }}"
+  register: ocp_gitops_argocd_info_check
+  when: ansible_check_mode
+  changed_when: false
+
+- name: "Check mode: print Argo CD instance existence info"
+  ansible.builtin.debug:
+    msg: >-
+      Default Argo CD instance '{{ ocp_gitops_instance_name }}'
+      in namespace '{{ ocp_gitops_instance_namespace }}' exists:
+      {{ (ocp_gitops_argocd_info_check.resources | length) > 0 }}
+  when: ansible_check_mode
+  changed_when: false
 
 ###########################################################################
-# Wait for Argo CD server deployment (normal run) / inspect (check mode)
+# Wait for Argo CD server deployment to be available ("stand up the server")
 ###########################################################################
 - name: "Wait for Argo CD server Deployment to be available"
   kubernetes.core.k8s_info:
@@ -175,7 +187,7 @@
   changed_when: false
 
 ###########################################################################
-# Route + login info (only makes sense in normal run)
+# Route + login info (once server is up)
 ###########################################################################
 - name: "Get Argo CD route"
   kubernetes.core.k8s_info:
@@ -191,9 +203,8 @@
   ansible.builtin.debug:
     msg:
       - "Argo CD Route: https://{{ ocp_gitops_route.resources[0].spec.host }}"
-      - "Username: admin"
+      - "Username: admin (for the default instance)"
       - >-
-        Password:
-        {{ ocp_gitops_admin_password if (ocp_gitops_admin_password | length > 0)
-           else 'Check the GitOps admin secret in the namespace (varies by version).' }}
+        Password: check the secret '{{ ocp_gitops_instance_name }}-cluster'
+        in namespace '{{ ocp_gitops_instance_namespace }}' (key: admin.password).
   when: not ansible_check_mode
