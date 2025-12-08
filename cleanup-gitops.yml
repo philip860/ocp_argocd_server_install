@@ -133,14 +133,15 @@
         state: absent
         api_version: operators.coreos.com/v1alpha1
         kind: ClusterServiceVersion
-        namespace: "{{ item.0.metadata.namespace }}"
-        name: "{{ item.1.metadata.name }}"
-      loop: "{{ query('subelements', community_csv_query.results, 'resources') }}"
+        namespace: "{{ item.metadata.namespace }}"
+        name: "{{ item.metadata.name }}"
+      # Flatten all CSV resources returned from each namespace query
+      loop: "{{ community_csv_query.results | map(attribute='resources') | list | flatten(levels=1) }}"
       when: >
         community_argocd_subs | length > 0 and
         (
-          item.1.metadata.name is search('argocd') or
-          item.1.spec.displayName | default('') is search('ArgoCD')
+          item.metadata.name is search('argocd')
+          or (item.spec.displayName | default('')) is search('ArgoCD')
         )
       ignore_errors: true
       tags: ['community-argocd']
