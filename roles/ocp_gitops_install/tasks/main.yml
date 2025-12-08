@@ -22,7 +22,7 @@
   vars:
     bad_subs: >-
       {{
-        ocp_gitops_all_subs.resources
+        (ocp_gitops_all_subs['resources'] | default([]))
         | selectattr('spec.name', 'defined')
         | selectattr('spec.name', 'match', 'argocd')
         | rejectattr('spec.name', 'equalto', ocp_gitops_operator_name)
@@ -77,7 +77,10 @@
   register: ocp_gitops_operator_ns_info
   retries: "{{ ocp_gitops_wait_retries }}"
   delay: "{{ ocp_gitops_wait_delay }}"
-  until: ocp_gitops_operator_ns_info.resources | length > 0
+  until: >
+    ocp_gitops_operator_ns_info is defined and
+    ('resources' in ocp_gitops_operator_ns_info) and
+    (ocp_gitops_operator_ns_info['resources'] | length) > 0
   when: not ansible_check_mode
 
 - name: "Check mode: show if operator namespace exists"
@@ -94,7 +97,7 @@
   ansible.builtin.debug:
     msg: >-
       Operator namespace '{{ ocp_gitops_operator_namespace }}' exists:
-      {{ (ocp_gitops_operator_ns_info_check.resources | length) > 0 }}
+      {{ (ocp_gitops_operator_ns_info_check['resources'] | default([]) | length) > 0 }}
   when: ansible_check_mode
   changed_when: false
 
@@ -148,8 +151,10 @@
   retries: "{{ ocp_gitops_wait_retries }}"
   delay: "{{ ocp_gitops_wait_delay }}"
   until: >
+    ocp_gitops_csvs is defined and
+    ('resources' in ocp_gitops_csvs) and
     (
-      ocp_gitops_csvs.resources
+      ocp_gitops_csvs['resources']
       | selectattr('metadata.name', 'search', ocp_gitops_operator_name)
       | selectattr('status.phase', 'equalto', 'Succeeded')
       | list
@@ -171,7 +176,7 @@
   ansible.builtin.debug:
     msg: >-
       Existing GitOps CSVs in {{ ocp_gitops_operator_namespace }}:
-      {{ ocp_gitops_csvs_check.resources | map(attribute='metadata.name') | list }}
+      {{ ocp_gitops_csvs_check['resources'] | default([]) | map(attribute='metadata.name') | list }}
   when: ansible_check_mode
   changed_when: false
 
@@ -187,7 +192,10 @@
   register: ocp_gitops_ns_info
   retries: "{{ ocp_gitops_wait_retries }}"
   delay: "{{ ocp_gitops_wait_delay }}"
-  until: ocp_gitops_ns_info.resources | length > 0
+  until: >
+    ocp_gitops_ns_info is defined and
+    ('resources' in ocp_gitops_ns_info) and
+    (ocp_gitops_ns_info['resources'] | length) > 0
   when: not ansible_check_mode
 
 - name: "Check mode: show if default GitOps namespace exists"
@@ -204,7 +212,7 @@
   ansible.builtin.debug:
     msg: >-
       Namespace '{{ ocp_gitops_instance_namespace }}' exists:
-      {{ (ocp_gitops_ns_info_check.resources | length) > 0 }}
+      {{ (ocp_gitops_ns_info_check['resources'] | default([]) | length) > 0 }}
   when: ansible_check_mode
   changed_when: false
 
@@ -221,7 +229,10 @@
   register: ocp_gitops_argocd_info
   retries: "{{ ocp_gitops_wait_retries }}"
   delay: "{{ ocp_gitops_wait_delay }}"
-  until: ocp_gitops_argocd_info.resources | length > 0
+  until: >
+    ocp_gitops_argocd_info is defined and
+    ('resources' in ocp_gitops_argocd_info) and
+    (ocp_gitops_argocd_info['resources'] | length) > 0
   when: not ansible_check_mode
 
 - name: "Check mode: look for default Argo CD instance (no wait)"
@@ -240,7 +251,7 @@
     msg: >-
       Default Argo CD instance '{{ ocp_gitops_instance_name }}'
       in namespace '{{ ocp_gitops_instance_namespace }}' exists:
-      {{ (ocp_gitops_argocd_info_check.resources | length) > 0 }}
+      {{ (ocp_gitops_argocd_info_check['resources'] | default([]) | length) > 0 }}
   when: ansible_check_mode
   changed_when: false
 
@@ -258,8 +269,13 @@
   retries: "{{ ocp_gitops_wait_retries }}"
   delay: "{{ ocp_gitops_wait_delay }}"
   until: >
-    ocp_gitops_server_deploy.resources | length > 0 and
-    (ocp_gitops_server_deploy.resources[0].status.readyReplicas | default(0) | int) > 0
+    ocp_gitops_server_deploy is defined and
+    ('resources' in ocp_gitops_server_deploy) and
+    (ocp_gitops_server_deploy['resources'] | length) > 0 and
+    (
+      ocp_gitops_server_deploy['resources'][0]['status']['readyReplicas']
+      | default(0) | int
+    ) > 0
   when: not ansible_check_mode
 
 - name: "Check mode: get Argo CD server deployment (no wait)"
@@ -289,7 +305,8 @@
 - name: "Show Argo CD URL and admin login hint"
   ansible.builtin.debug:
     msg:
-      - "Argo CD Route: https://{{ ocp_gitops_route.resources[0].spec.host }}"
+      - >-
+        Argo CD Route: https://{{ ocp_gitops_route['resources'][0].spec.host }}
       - "Username: admin (default Red Hat GitOps instance)"
       - >-
         Password: check the secret '{{ ocp_gitops_instance_name }}-cluster'
