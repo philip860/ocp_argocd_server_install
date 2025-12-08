@@ -6,7 +6,7 @@
 
   vars:
     # Path to kubeconfig that points to the remote OCP cluster
-    ocp_kubeconfig: "/home/phil/.kube/ocp-remote-cluster.config"
+    ocp_kubeconfig: "/root/OpenShift/cluster_config_files/ocp-cluster-automation.config"
 
     # Optionally override other defaults here, e.g.:
     # ocp_gitops_operator_channel: "gitops-1.13"
