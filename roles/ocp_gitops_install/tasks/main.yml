@@ -1,2 +1,162 @@
 ---
-# tasks file for argocd_server_install
+- name: "Ensure operator namespace '{{ ocp_gitops_operator_namespace }}' exists"
+  kubernetes.core.k8s:
+    kubeconfig: "{{ ocp_kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ ocp_gitops_operator_namespace }}"
+
+- name: "Ensure GitOps instance namespace '{{ ocp_gitops_instance_namespace }}' exists"
+  kubernetes.core.k8s:
+    kubeconfig: "{{ ocp_kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ ocp_gitops_instance_namespace }}"
+
+###########################################################################
+# OperatorGroup
+###########################################################################
+- name: "Create OperatorGroup for GitOps operator"
+  kubernetes.core.k8s:
+    kubeconfig: "{{ ocp_kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: operators.coreos.com/v1
+      kind: OperatorGroup
+      metadata:
+        name: gitops-operator-group
+        namespace: "{{ ocp_gitops_operator_namespace }}"
+      spec:
+        targetNamespaces:
+          - "{{ ocp_gitops_instance_namespace }}"
+
+###########################################################################
+# Subscription
+###########################################################################
+- name: "Subscribe to OpenShift GitOps operator"
+  kubernetes.core.k8s:
+    kubeconfig: "{{ ocp_kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: operators.coreos.com/v1alpha1
+      kind: Subscription
+      metadata:
+        name: "{{ ocp_gitops_operator_name }}"
+        namespace: "{{ ocp_gitops_operator_namespace }}"
+      spec:
+        channel: "{{ ocp_gitops_operator_channel }}"
+        name: "{{ ocp_gitops_operator_name }}"
+        source: "{{ ocp_gitops_operator_source }}"
+        sourceNamespace: "{{ ocp_gitops_operator_source_namespace }}"
+        installPlanApproval: Automatic
+
+###########################################################################
+# Wait for operator CSV
+###########################################################################
+- name: "Wait for GitOps operator CSV to be Succeeded"
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ ocp_kubeconfig }}"
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    namespace: "{{ ocp_gitops_operator_namespace }}"
+  register: ocp_gitops_csvs
+  retries: "{{ ocp_gitops_wait_retries }}"
+  delay: "{{ ocp_gitops_wait_delay }}"
+  until: >
+    ocp_gitops_csvs.resources | selectattr('metadata.name', 'search', ocp_gitops_operator_name)
+    | selectattr('status.phase', 'equalto', 'Succeeded')
+    | list | length > 0
+
+###########################################################################
+# Optional admin password secret
+###########################################################################
+- name: "Create custom Argo CD admin password secret (optional)"
+  when: ocp_gitops_admin_password | length > 0
+  kubernetes.core.k8s:
+    kubeconfig: "{{ ocp_kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: "{{ ocp_gitops_instance_name }}-cluster"
+        namespace: "{{ ocp_gitops_instance_namespace }}"
+        labels:
+          app.kubernetes.io/part-of: openshift-gitops
+          app.kubernetes.io/name: openshift-gitops-argocd
+      type: Opaque
+      stringData:
+        admin.password: "{{ ocp_gitops_admin_password }}"
+
+###########################################################################
+# ArgoCD instance
+###########################################################################
+- name: "Create OpenShift GitOps ArgoCD instance"
+  kubernetes.core.k8s:
+    kubeconfig: "{{ ocp_kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: argoproj.io/v1beta1
+      kind: ArgoCD
+      metadata:
+        name: "{{ ocp_gitops_instance_name }}"
+        namespace: "{{ ocp_gitops_instance_namespace }}"
+      spec:
+        server:
+          route:
+            enabled: true   # Expose Argo CD UI via OpenShift Route
+        grafana:
+          enabled: true
+        prometheus:
+          enabled: true
+        applicationSet:
+          enabled: true
+        repo:
+          volumeMounts: []
+        resourceExclusions: []
+        kustomizeBuildOptions: ""
+
+###########################################################################
+# Wait for Argo CD server deployment
+###########################################################################
+- name: "Wait for Argo CD server Deployment to be available"
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ ocp_kubeconfig }}"
+    api_version: apps/v1
+    kind: Deployment
+    namespace: "{{ ocp_gitops_instance_namespace }}"
+    name: "{{ ocp_gitops_instance_name }}-server"
+  register: ocp_gitops_server_deploy
+  retries: "{{ ocp_gitops_wait_retries }}"
+  delay: "{{ ocp_gitops_wait_delay }}"
+  until: >
+    ocp_gitops_server_deploy.resources | length > 0 and
+    (ocp_gitops_server_deploy.resources[0].status.readyReplicas | default(0)) | int > 0
+
+###########################################################################
+# Route + login info
+###########################################################################
+- name: "Get Argo CD route"
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ ocp_kubeconfig }}"
+    api_version: route.openshift.io/v1
+    kind: Route
+    namespace: "{{ ocp_gitops_instance_namespace }}"
+    name: "{{ ocp_gitops_instance_name }}-server"
+  register: ocp_gitops_route
+
+- name: "Show Argo CD URL and admin login hint"
+  ansible.builtin.debug:
+    msg:
+      - "Argo CD Route: https://{{ ocp_gitops_route.resources[0].spec.host }}"
+      - "Username: admin"
+      - >-
+        Password:
+        {{ ocp_gitops_admin_password if (ocp_gitops_admin_password | length > 0)
+           else 'Check the GitOps admin secret in the namespace (varies by version).' }}

@@ -1,0 +1,16 @@
+---
+- name: Install and configure OpenShift GitOps (Argo CD) on remote OCP cluster
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    # Path to kubeconfig that points to the remote OCP cluster
+    ocp_kubeconfig: "/home/phil/.kube/ocp-remote-cluster.config"
+
+    # Optionally override other defaults here, e.g.:
+    # ocp_gitops_operator_channel: "gitops-1.13"
+    # ocp_gitops_admin_password: "SuperSecurePassword123!"
+
+  roles:
+    - ocp_gitops_install
