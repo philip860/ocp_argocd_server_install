@@ -57,7 +57,7 @@
         installPlanApproval: Automatic
 
 ###########################################################################
-# Wait for operator CSV
+# Wait for operator CSV (normal run) / inspect (check mode)
 ###########################################################################
 - name: "Wait for GitOps operator CSV to be Succeeded"
   kubernetes.core.k8s_info:
@@ -69,9 +69,32 @@
   retries: "{{ ocp_gitops_wait_retries }}"
   delay: "{{ ocp_gitops_wait_delay }}"
   until: >
-    ocp_gitops_csvs.resources | selectattr('metadata.name', 'search', ocp_gitops_operator_name)
-    | selectattr('status.phase', 'equalto', 'Succeeded')
-    | list | length > 0
+    (
+      ocp_gitops_csvs.resources
+      | selectattr('metadata.name', 'search', ocp_gitops_operator_name)
+      | selectattr('status.phase', 'equalto', 'Succeeded')
+      | list
+      | length
+    ) > 0
+  when: not ansible_check_mode
+
+- name: "Check mode: show existing GitOps operator CSVs (no wait)"
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ ocp_kubeconfig }}"
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    namespace: "{{ ocp_gitops_operator_namespace }}"
+  register: ocp_gitops_csvs_check
+  when: ansible_check_mode
+  changed_when: false
+
+- name: "Check mode: print GitOps CSV names"
+  ansible.builtin.debug:
+    msg: >-
+      Existing GitOps CSVs in {{ ocp_gitops_operator_namespace }}:
+      {{ ocp_gitops_csvs_check.resources | map(attribute='metadata.name') | list }}
+  when: ansible_check_mode
+  changed_when: false
 
 ###########################################################################
 # Optional admin password secret
@@ -123,7 +146,7 @@
         kustomizeBuildOptions: ""
 
 ###########################################################################
-# Wait for Argo CD server deployment
+# Wait for Argo CD server deployment (normal run) / inspect (check mode)
 ###########################################################################
 - name: "Wait for Argo CD server Deployment to be available"
   kubernetes.core.k8s_info:
@@ -137,10 +160,22 @@
   delay: "{{ ocp_gitops_wait_delay }}"
   until: >
     ocp_gitops_server_deploy.resources | length > 0 and
-    (ocp_gitops_server_deploy.resources[0].status.readyReplicas | default(0)) | int > 0
+    (ocp_gitops_server_deploy.resources[0].status.readyReplicas | default(0) | int) > 0
+  when: not ansible_check_mode
+
+- name: "Check mode: get Argo CD server deployment (no wait)"
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ ocp_kubeconfig }}"
+    api_version: apps/v1
+    kind: Deployment
+    namespace: "{{ ocp_gitops_instance_namespace }}"
+    name: "{{ ocp_gitops_instance_name }}-server"
+  register: ocp_gitops_server_deploy_check
+  when: ansible_check_mode
+  changed_when: false
 
 ###########################################################################
-# Route + login info
+# Route + login info (only makes sense in normal run)
 ###########################################################################
 - name: "Get Argo CD route"
   kubernetes.core.k8s_info:
@@ -150,6 +185,7 @@
     namespace: "{{ ocp_gitops_instance_namespace }}"
     name: "{{ ocp_gitops_instance_name }}-server"
   register: ocp_gitops_route
+  when: not ansible_check_mode
 
 - name: "Show Argo CD URL and admin login hint"
   ansible.builtin.debug:
@@ -160,3 +196,4 @@
         Password:
         {{ ocp_gitops_admin_password if (ocp_gitops_admin_password | length > 0)
            else 'Check the GitOps admin secret in the namespace (varies by version).' }}
+  when: not ansible_check_mode
