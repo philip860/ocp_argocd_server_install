@@ -1,0 +1,219 @@
+---
+- name: Cleanup OpenShift GitOps / ArgoCD operators and instances
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    # Kubeconfig with enough rights to delete operators / namespaces
+    ocp_kubeconfig: "/tmp/ocp-cluster-automation.config"
+
+    # Red Hat OpenShift GitOps operator details
+    gitops_subscription_name: "openshift-gitops-operator"
+    gitops_operator_namespaces:
+      - "openshift-gitops-operator"
+      - "openshift-operators"   # in case it was installed here previously
+    gitops_operatorgroup_name: "gitops-operator-group"
+
+    # Default GitOps instance
+    gitops_instance_namespace: "openshift-gitops"
+    gitops_instance_name: "openshift-gitops"
+
+    # Set to true if you want to delete the openshift-gitops namespace entirely
+    remove_gitops_namespace: true
+
+  tasks:
+    ########################################################################
+    # 1) Delete Red Hat OpenShift GitOps operator: Subscription, CSVs, OG
+    ########################################################################
+    - name: "Delete Red Hat GitOps Subscription (if present)"
+      kubernetes.core.k8s:
+        kubeconfig: "{{ ocp_kubeconfig }}"
+        state: absent
+        api_version: operators.coreos.com/v1alpha1
+        kind: Subscription
+        namespace: "{{ item }}"
+        name: "{{ gitops_subscription_name }}"
+      loop: "{{ gitops_operator_namespaces }}"
+      ignore_errors: true
+      tags: ['gitops-operator']
+
+    - name: "Find GitOps CSVs in operator namespaces"
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ ocp_kubeconfig }}"
+        api_version: operators.coreos.com/v1alpha1
+        kind: ClusterServiceVersion
+        namespace: "{{ item }}"
+      loop: "{{ gitops_operator_namespaces }}"
+      register: gitops_csv_query
+      tags: ['gitops-operator']
+
+    - name: "Delete GitOps CSVs (if any)"
+      kubernetes.core.k8s:
+        kubeconfig: "{{ ocp_kubeconfig }}"
+        state: absent
+        api_version: operators.coreos.com/v1alpha1
+        kind: ClusterServiceVersion
+        namespace: "{{ item.0 }}"
+        name: "{{ item.1.metadata.name }}"
+      loop: "{{ query('subelements', gitops_csv_query.results, 'resources') }}"
+      when: item.1.metadata.name is search(gitops_subscription_name)
+      ignore_errors: true
+      tags: ['gitops-operator']
+
+    - name: "Delete GitOps OperatorGroup (if present)"
+      kubernetes.core.k8s:
+        kubeconfig: "{{ ocp_kubeconfig }}"
+        state: absent
+        api_version: operators.coreos.com/v1
+        kind: OperatorGroup
+        namespace: "{{ item }}"
+        name: "{{ gitops_operatorgroup_name }}"
+      loop: "{{ gitops_operator_namespaces }}"
+      ignore_errors: true
+      tags: ['gitops-operator']
+
+    ########################################################################
+    # 2) Delete *community* ArgoCD operators (anything 'argocd' that's not
+    #    openshift-gitops-operator)
+    ########################################################################
+    - name: "Find all Subscriptions with 'argocd' in spec.name"
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ ocp_kubeconfig }}"
+        api_version: operators.coreos.com/v1alpha1
+        kind: Subscription
+      register: all_argocd_subs
+      tags: ['community-argocd']
+
+    - name: "Build list of community ArgoCD subscriptions (not Red Hat GitOps)"
+      ansible.builtin.set_fact:
+        community_argocd_subs: >-
+          {{
+            all_argocd_subs.resources
+            | selectattr('spec.name', 'defined')
+            | selectattr('spec.name', 'match', 'argocd')
+            | rejectattr('spec.name', 'equalto', gitops_subscription_name)
+            | list
+          }}
+      tags: ['community-argocd']
+
+    - name: "Debug: show community ArgoCD subscriptions found"
+      ansible.builtin.debug:
+        var: community_argocd_subs
+      when: community_argocd_subs | length > 0
+      tags: ['community-argocd']
+
+    - name: "Delete community ArgoCD Subscriptions"
+      kubernetes.core.k8s:
+        kubeconfig: "{{ ocp_kubeconfig }}"
+        state: absent
+        api_version: operators.coreos.com/v1alpha1
+        kind: Subscription
+        namespace: "{{ item.metadata.namespace }}"
+        name: "{{ item.metadata.name }}"
+      loop: "{{ community_argocd_subs | default([]) }}"
+      when: community_argocd_subs | length > 0
+      ignore_errors: true
+      tags: ['community-argocd']
+
+    - name: "Find community ArgoCD CSVs in those namespaces"
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ ocp_kubeconfig }}"
+        api_version: operators.coreos.com/v1alpha1
+        kind: ClusterServiceVersion
+        namespace: "{{ item.metadata.namespace }}"
+      loop: "{{ community_argocd_subs | default([]) }}"
+      register: community_csv_query
+      when: community_argocd_subs | length > 0
+      tags: ['community-argocd']
+
+    - name: "Delete community ArgoCD CSVs"
+      kubernetes.core.k8s:
+        kubeconfig: "{{ ocp_kubeconfig }}"
+        state: absent
+        api_version: operators.coreos.com/v1alpha1
+        kind: ClusterServiceVersion
+        namespace: "{{ item.0.metadata.namespace }}"
+        name: "{{ item.1.metadata.name }}"
+      loop: "{{ query('subelements', community_csv_query.results, 'resources') }}"
+      when: >
+        community_argocd_subs | length > 0 and
+        (
+          item.1.metadata.name is search('argocd') or
+          item.1.spec.displayName | default('') is search('ArgoCD')
+        )
+      ignore_errors: true
+      tags: ['community-argocd']
+
+    - name: "Delete OperatorGroups in namespaces with community ArgoCD subs"
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ ocp_kubeconfig }}"
+        api_version: operators.coreos.com/v1
+        kind: OperatorGroup
+        namespace: "{{ item.metadata.namespace }}"
+      loop: "{{ community_argocd_subs | default([]) }}"
+      register: community_og_query
+      when: community_argocd_subs | length > 0
+      tags: ['community-argocd']
+
+    - name: "Delete OperatorGroups found for community ArgoCD"
+      kubernetes.core.k8s:
+        kubeconfig: "{{ ocp_kubeconfig }}"
+        state: absent
+        api_version: operators.coreos.com/v1
+        kind: OperatorGroup
+        namespace: "{{ item.0.metadata.namespace }}"
+        name: "{{ item.1.metadata.name }}"
+      loop: "{{ query('subelements', community_og_query.results, 'resources') }}"
+      when: community_argocd_subs | length > 0
+      ignore_errors: true
+      tags: ['community-argocd']
+
+    ########################################################################
+    # 3) Delete ArgoCD instances (CRs) in openshift-gitops
+    ########################################################################
+    - name: "Find ArgoCD instances in '{{ gitops_instance_namespace }}'"
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ ocp_kubeconfig }}"
+        api_version: argoproj.io/v1beta1
+        kind: ArgoCD
+        namespace: "{{ gitops_instance_namespace }}"
+      register: argocd_crs
+      ignore_errors: true
+      tags: ['gitops-instance']
+
+    - name: "Delete ArgoCD CRs in '{{ gitops_instance_namespace }}'"
+      kubernetes.core.k8s:
+        kubeconfig: "{{ ocp_kubeconfig }}"
+        state: absent
+        api_version: argoproj.io/v1beta1
+        kind: ArgoCD
+        namespace: "{{ gitops_instance_namespace }}"
+        name: "{{ item.metadata.name }}"
+      loop: "{{ argocd_crs.resources | default([]) }}"
+      ignore_errors: true
+      tags: ['gitops-instance']
+
+    ########################################################################
+    # 4) Optionally delete the openshift-gitops namespace (FULL reset)
+    ########################################################################
+    - name: "Delete namespace '{{ gitops_instance_namespace }}' (FULL reset)"
+      kubernetes.core.k8s:
+        kubeconfig: "{{ ocp_kubeconfig }}"
+        state: absent
+        api_version: v1
+        kind: Namespace
+        name: "{{ gitops_instance_namespace }}"
+      when: remove_gitops_namespace | bool
+      ignore_errors: true
+      tags: ['gitops-namespace']
+
+    ########################################################################
+    # 5) Summary
+    ########################################################################
+    - name: "Cleanup complete – summary hint"
+      ansible.builtin.debug:
+        msg:
+          - "GitOps / ArgoCD cleanup playbook completed."
+          - "You can now rerun your GitOps install playbook from a clean state."
+          - "If any namespaces or resources remain, check for errors in the tasks above."
