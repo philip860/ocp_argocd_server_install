@@ -1,8 +1,39 @@
 ---
 ###########################################################################
-# Ensure operator namespace exists (where Subscription lives)
+# 0) Preflight: fail if a community ArgoCD operator is installed
+#    (we only want Red Hat OpenShift GitOps: openshift-gitops-operator)
 ###########################################################################
-- name: "Ensure operator namespace '{{ ocp_gitops_operator_namespace }}' exists"
+- name: "Preflight: find subscriptions that look like community ArgoCD operators"
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ ocp_kubeconfig }}"
+    api_version: operators.coreos.com/v1alpha1
+    kind: Subscription
+  register: ocp_gitops_all_subs
+
+- name: "Preflight: fail if non-RedHat ArgoCD operators are present"
+  ansible.builtin.fail:
+    msg: >-
+      Found Subscriptions that look like community ArgoCD operators (not Red Hat
+      OpenShift GitOps). Please uninstall these before running this role to avoid
+      OLM 'intersecting operatorgroups provide the same apis' conflicts.
+
+      Offending Subscriptions:
+      {{ bad_subs | map('to_json') | join('\n') }}
+  vars:
+    bad_subs: >-
+      {{
+        ocp_gitops_all_subs.resources
+        | selectattr('spec.name', 'defined')
+        | selectattr('spec.name', 'match', 'argocd')
+        | rejectattr('spec.name', 'equalto', ocp_gitops_operator_name)
+        | list
+      }}
+  when: bad_subs | length > 0
+
+###########################################################################
+# 1) Ensure operator namespace exists (where Subscription & OperatorGroup live)
+###########################################################################
+- name: "Create operator namespace '{{ ocp_gitops_operator_namespace }}' (if allowed)"
   kubernetes.core.k8s:
     kubeconfig: "{{ ocp_kubeconfig }}"
     state: present
@@ -11,11 +42,66 @@
       kind: Namespace
       metadata:
         name: "{{ ocp_gitops_operator_namespace }}"
+  when: not ansible_check_mode
+  register: ocp_gitops_operator_ns_create
+  failed_when: >
+    ocp_gitops_operator_ns_create.failed and
+    (
+      'Forbidden' not in (ocp_gitops_operator_ns_create.msg | default('')) and
+      'forbidden' not in (ocp_gitops_operator_ns_create.msg | default(''))
+    )
+
+- name: "Fail if operator namespace is missing and cannot be created by this ServiceAccount"
+  ansible.builtin.fail:
+    msg: >-
+      Namespace '{{ ocp_gitops_operator_namespace }}' does not exist and could not be
+      created using the current credentials. Per Red Hat docs, you must create it once
+      as a cluster-admin, e.g.:
+
+        oc create namespace {{ ocp_gitops_operator_namespace }}
+  when: >
+    not ansible_check_mode and
+    ocp_gitops_operator_ns_create is defined and
+    ocp_gitops_operator_ns_create.failed and
+    (
+      'Forbidden' in (ocp_gitops_operator_ns_create.msg | default('')) or
+      'forbidden' in (ocp_gitops_operator_ns_create.msg | default(''))
+    )
+
+- name: "Wait for operator namespace '{{ ocp_gitops_operator_namespace }}' to exist"
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ ocp_kubeconfig }}"
+    api_version: v1
+    kind: Namespace
+    name: "{{ ocp_gitops_operator_namespace }}"
+  register: ocp_gitops_operator_ns_info
+  retries: "{{ ocp_gitops_wait_retries }}"
+  delay: "{{ ocp_gitops_wait_delay }}"
+  until: ocp_gitops_operator_ns_info.resources | length > 0
+  when: not ansible_check_mode
+
+- name: "Check mode: show if operator namespace exists"
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ ocp_kubeconfig }}"
+    api_version: v1
+    kind: Namespace
+    name: "{{ ocp_gitops_operator_namespace }}"
+  register: ocp_gitops_operator_ns_info_check
+  when: ansible_check_mode
+  changed_when: false
+
+- name: "Check mode: print operator namespace existence info"
+  ansible.builtin.debug:
+    msg: >-
+      Operator namespace '{{ ocp_gitops_operator_namespace }}' exists:
+      {{ (ocp_gitops_operator_ns_info_check.resources | length) > 0 }}
+  when: ansible_check_mode
+  changed_when: false
 
 ###########################################################################
-# OperatorGroup (in operator namespace)
+# 2) OperatorGroup in operator namespace (Red Hat GitOps operator only)
 ###########################################################################
-- name: "Create OperatorGroup for GitOps operator"
+- name: "Create OperatorGroup for Red Hat OpenShift GitOps operator"
   kubernetes.core.k8s:
     kubeconfig: "{{ ocp_kubeconfig }}"
     state: present
@@ -26,12 +112,13 @@
         name: gitops-operator-group
         namespace: "{{ ocp_gitops_operator_namespace }}"
       spec:
-        targetNamespaces: []  # empty = cluster-wide (recommended for GitOps)
+        # Empty targetNamespaces = cluster-wide, which is recommended for GitOps
+        targetNamespaces: []
 
 ###########################################################################
-# Subscription for OpenShift GitOps operator
+# 3) Subscription for Red Hat OpenShift GitOps operator
 ###########################################################################
-- name: "Subscribe to OpenShift GitOps operator"
+- name: "Subscribe to Red Hat OpenShift GitOps operator"
   kubernetes.core.k8s:
     kubeconfig: "{{ ocp_kubeconfig }}"
     state: present
@@ -49,7 +136,7 @@
         installPlanApproval: Automatic
 
 ###########################################################################
-# Wait for operator CSV (normal run) / inspect in check mode
+# 4) Wait for GitOps operator CSV (normal run) / inspect in check mode
 ###########################################################################
 - name: "Wait for GitOps operator CSV to be Succeeded"
   kubernetes.core.k8s_info:
@@ -89,7 +176,7 @@
   changed_when: false
 
 ###########################################################################
-# Wait for operator to create the default namespace 'openshift-gitops'
+# 5) Wait for default GitOps namespace 'openshift-gitops' created by operator
 ###########################################################################
 - name: "Wait for default GitOps namespace '{{ ocp_gitops_instance_namespace }}' to be created by operator"
   kubernetes.core.k8s_info:
@@ -122,7 +209,7 @@
   changed_when: false
 
 ###########################################################################
-# Wait for default ArgoCD instance (created automatically by operator)
+# 6) Wait for default ArgoCD instance (created automatically by GitOps operator)
 ###########################################################################
 - name: "Wait for default Argo CD instance '{{ ocp_gitops_instance_name }}' in '{{ ocp_gitops_instance_namespace }}'"
   kubernetes.core.k8s_info:
@@ -158,7 +245,7 @@
   changed_when: false
 
 ###########################################################################
-# Wait for Argo CD server deployment to be available ("stand up the server")
+# 7) Wait for Argo CD server deployment to be available (stand up the server)
 ###########################################################################
 - name: "Wait for Argo CD server Deployment to be available"
   kubernetes.core.k8s_info:
@@ -187,7 +274,7 @@
   changed_when: false
 
 ###########################################################################
-# Route + login info (once server is up)
+# 8) Route + login info
 ###########################################################################
 - name: "Get Argo CD route"
   kubernetes.core.k8s_info:
@@ -203,7 +290,7 @@
   ansible.builtin.debug:
     msg:
       - "Argo CD Route: https://{{ ocp_gitops_route.resources[0].spec.host }}"
-      - "Username: admin (for the default instance)"
+      - "Username: admin (default Red Hat GitOps instance)"
       - >-
         Password: check the secret '{{ ocp_gitops_instance_name }}-cluster'
         in namespace '{{ ocp_gitops_instance_namespace }}' (key: admin.password).
