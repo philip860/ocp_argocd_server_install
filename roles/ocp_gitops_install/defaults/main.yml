@@ -1,27 +1,27 @@
 ---
-# Path to kubeconfig on the control node (localhost)
-# This should be the kubeconfig you created via:
+# Kubeconfig used by Ansible (runs on localhost) to talk to the OCP cluster.
+# Typically created with:
 #   oc login --token=... --server=... --kubeconfig=/tmp/ocp-cluster-automation.config
 ocp_kubeconfig: "/tmp/ocp-cluster-automation.config"
 
-# Namespace where the GitOps operator will be installed
-# For GitOps 1.10+ the default is openshift-gitops-operator
+# Namespace where the Red Hat OpenShift GitOps *operator* is installed.
+# For current GitOps releases, this is typically `openshift-gitops-operator`.
 ocp_gitops_operator_namespace: "openshift-gitops-operator"
 
-# Namespace where the default Argo CD instance will live
-# The operator creates this namespace and the default instance automatically.
+# Namespace where the default Argo CD instance will live.
+# The Red Hat GitOps operator automatically creates this namespace & instance.
 ocp_gitops_instance_namespace: "openshift-gitops"
 
-# Operator details
-# Subscription name & CSV prefix for OpenShift GitOps operator
+# Red Hat OpenShift GitOps operator subscription details.
+# IMPORTANT: This is the supported Red Hat operator, NOT the community ArgoCD operator.
 ocp_gitops_operator_name: "openshift-gitops-operator"
 ocp_gitops_operator_channel: "latest"    # e.g. gitops-1.13, stable, etc.
 ocp_gitops_operator_source: "redhat-operators"
 ocp_gitops_operator_source_namespace: "openshift-marketplace"
 
-# Default Argo CD instance name (created automatically by the operator)
+# Default Argo CD instance name created by the GitOps operator.
 ocp_gitops_instance_name: "openshift-gitops"
 
-# Retry behavior for waiting on operator, namespace, and deployments
+# Retry behavior for waiting on operator CSV / namespaces / deployments
 ocp_gitops_wait_retries: 30
 ocp_gitops_wait_delay: 20
