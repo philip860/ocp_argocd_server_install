@@ -36,6 +36,7 @@
         name: "{{ gitops_subscription_name }}"
       loop: "{{ gitops_operator_namespaces }}"
       ignore_errors: true
+      failed_when: false
       tags: ['gitops-operator']
 
     - name: "Find GitOps CSVs in operator namespaces"
@@ -54,11 +55,13 @@
         state: absent
         api_version: operators.coreos.com/v1alpha1
         kind: ClusterServiceVersion
-        namespace: "{{ item.0 }}"
-        name: "{{ item.1.metadata.name }}"
-      loop: "{{ query('subelements', gitops_csv_query.results, 'resources') }}"
-      when: item.1.metadata.name is search(gitops_subscription_name)
+        namespace: "{{ item.metadata.namespace }}"
+        name: "{{ item.metadata.name }}"
+      # Flatten all CSV resources from all queried namespaces
+      loop: "{{ gitops_csv_query.results | map(attribute='resources') | list | flatten(levels=1) }}"
+      when: item.metadata.name is search(gitops_subscription_name)
       ignore_errors: true
+      failed_when: false
       tags: ['gitops-operator']
 
     - name: "Delete GitOps OperatorGroup (if present)"
@@ -71,6 +74,7 @@
         name: "{{ gitops_operatorgroup_name }}"
       loop: "{{ gitops_operator_namespaces }}"
       ignore_errors: true
+      failed_when: false
       tags: ['gitops-operator']
 
     ########################################################################
@@ -114,6 +118,7 @@
       loop: "{{ community_argocd_subs | default([]) }}"
       when: community_argocd_subs | length > 0
       ignore_errors: true
+      failed_when: false
       tags: ['community-argocd']
 
     - name: "Find community ArgoCD CSVs in those namespaces"
@@ -144,6 +149,7 @@
           or (item.spec.displayName | default('')) is search('ArgoCD')
         )
       ignore_errors: true
+      failed_when: false
       tags: ['community-argocd']
 
     - name: "Get OperatorGroups in namespaces with community ArgoCD subs"
@@ -168,6 +174,7 @@
       loop: "{{ community_og_query.results | map(attribute='resources') | list | flatten(levels=1) }}"
       when: community_argocd_subs | length > 0
       ignore_errors: true
+      failed_when: false
       tags: ['community-argocd']
 
     ########################################################################
@@ -181,6 +188,7 @@
         namespace: "{{ gitops_instance_namespace }}"
       register: argocd_crs
       ignore_errors: true
+      failed_when: false
       tags: ['gitops-instance']
 
     - name: "Delete ArgoCD CRs in '{{ gitops_instance_namespace }}'"
@@ -193,6 +201,7 @@
         name: "{{ item.metadata.name }}"
       loop: "{{ argocd_crs.resources | default([]) }}"
       ignore_errors: true
+      failed_when: false
       tags: ['gitops-instance']
 
     ########################################################################
@@ -207,6 +216,7 @@
         name: "{{ gitops_instance_namespace }}"
       when: remove_gitops_namespace | bool
       ignore_errors: true
+      failed_when: false
       tags: ['gitops-namespace']
 
     ########################################################################
