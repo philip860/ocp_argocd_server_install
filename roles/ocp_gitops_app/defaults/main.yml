@@ -1,25 +1,34 @@
 ---
-# Kubeconfig used to connect to the cluster
+###########################################################################
+# Defaults for ocp_gitops_app role
+#
+# These can all be overridden in:
+#   - the calling playbook
+#   - or via `-e` extra-vars
+###########################################################################
+
+# Kubeconfig pointing to your OpenShift cluster
 ocp_kubeconfig: "/tmp/ocp-cluster-automation.config"
 
-# GitOps / Argo CD operator instance (from your install role)
+# Namespace & name of the OpenShift GitOps (Argo CD) instance
 ocp_gitops_instance_namespace: "openshift-gitops"
 ocp_gitops_instance_name: "openshift-gitops"
 
-# Argo CD Application basics
+# Argo CD Application metadata
 argocd_app_name: "demo-app"
 argocd_app_project: "default"
 
-# Git source parameters
+# Git repository details (source of truth for this application)
 argocd_repo_url: "https://example.com/your/repo.git"
 argocd_repo_path: "."
 argocd_repo_revision: "main"
 
-# Destination cluster + namespace for the app
+# Destination cluster & namespace for the app
+# Usually cluster API inside OCP = https://kubernetes.default.svc
 argocd_dest_server: "https://kubernetes.default.svc"
 argocd_dest_namespace: "demo-namespace"
 
-# Sync policy
+# Sync policy (GitOps behavior)
 argocd_sync_policy_automated: true
 argocd_sync_policy_prune: true
 argocd_sync_policy_selfHeal: true
