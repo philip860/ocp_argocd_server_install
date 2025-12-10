@@ -1,11 +1,63 @@
 ---
 ###########################################################################
-# 1) Ensure destination namespace exists (optional but handy)
+# Role: ocp_gitops_app
 #
-# We create the destination namespace if it doesn't exist. This is convenient
-# in automation flows where you want "app + namespace" provisioned together.
+# Purpose:
+#   - Validate or (optionally) create the destination application namespace
+#   - Create or update an Argo CD Application resource in the
+#     OpenShift GitOps namespace (openshift-gitops by default)
+#
+# Namespace behavior (create_missing_namespace):
+#   - false (default):
+#       * If argocd_dest_namespace does NOT exist, this role will FAIL
+#         with a clear message telling you to have a cluster-admin
+#         create it before rerunning.
+#   - true:
+#       * If argocd_dest_namespace does NOT exist, it will be created
+#         automatically using the k8s module.
 ###########################################################################
-- name: "Ensure destination namespace '{{ argocd_dest_namespace }}' exists"
+
+###########################################################################
+# 1a) Check if destination namespace exists
+#
+# We use k8s_info to see whether argocd_dest_namespace already exists.
+# This is skipped in check mode.
+###########################################################################
+- name: "Check if destination namespace '{{ argocd_dest_namespace }}' exists"
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ ocp_kubeconfig }}"
+    api_version: v1
+    kind: Namespace
+    name: "{{ argocd_dest_namespace }}"
+  register: dest_ns_info
+  when: not ansible_check_mode
+
+###########################################################################
+# 1b) Fail if namespace is missing and auto-create is disabled
+#
+# If create_missing_namespace == false and the namespace does not exist,
+# we explicitly fail with a helpful message so a cluster-admin can create
+# the namespace first, then the playbook can be rerun.
+###########################################################################
+- name: "Fail when destination namespace is missing and auto-create is disabled"
+  ansible.builtin.fail:
+    msg: >-
+      Destination namespace '{{ argocd_dest_namespace }}' does not exist,
+      and create_missing_namespace is set to false.
+      Please ask a cluster-admin to create this namespace, then rerun
+      the playbook.
+  when:
+    - not ansible_check_mode
+    - not (create_missing_namespace | bool)
+    - (dest_ns_info.resources | length) == 0
+
+###########################################################################
+# 1c) Ensure destination namespace exists (only if auto-create is enabled)
+#
+# If create_missing_namespace == true and the namespace is missing,
+# we create it here. If it already exists, this is effectively a no-op.
+###########################################################################
+- name: "Ensure destination namespace '{{ argocd_dest_namespace }}' exists (auto-create enabled)"
   kubernetes.core.k8s:
     kubeconfig: "{{ ocp_kubeconfig }}"
     state: present
@@ -14,13 +66,29 @@
       kind: Namespace
       metadata:
         name: "{{ argocd_dest_namespace }}"
-  when: not ansible_check_mode
+  when:
+    - not ansible_check_mode
+    - create_missing_namespace | bool
+    # If you want to strictly only create when missing, uncomment:
+    # - (dest_ns_info.resources | length) == 0
 
 ###########################################################################
 # 2a) Create / update Argo CD Application CR (AUTOMATED sync)
 #
 # This task runs when argocd_sync_policy_automated is true.
 # It sets spec.syncPolicy.automated with prune/selfHeal flags.
+#
+# Key variables (often set via playbook or -e):
+#   - argocd_app_name
+#   - ocp_gitops_instance_namespace
+#   - argocd_app_project
+#   - argocd_repo_url
+#   - argocd_repo_path
+#   - argocd_repo_revision
+#   - argocd_dest_server
+#   - argocd_dest_namespace
+#   - argocd_sync_policy_prune
+#   - argocd_sync_policy_selfHeal
 ###########################################################################
 - name: "Create or update Argo CD Application '{{ argocd_app_name }}' (automated sync)"
   kubernetes.core.k8s:
