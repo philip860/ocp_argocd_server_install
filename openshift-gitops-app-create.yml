@@ -5,30 +5,115 @@
   gather_facts: false
 
   vars:
-    # Same kubeconfig you use for the install role
+    ######################################################################
+    # Kubeconfig for the target OpenShift cluster
+    # - This should be the same kubeconfig you used to install GitOps.
+    ######################################################################
     ocp_kubeconfig: "/tmp/ocp-cluster-automation.config"
 
-    # Argo CD / GitOps instance details
-    ocp_gitops_instance_namespace: "openshift-gitops"  # where ArgoCD & Applications live
+    ######################################################################
+    # OpenShift GitOps (Argo CD) instance details
+    #
+    # ocp_gitops_instance_namespace:
+    #   Namespace where the Red Hat OpenShift GitOps operator created
+    #   the default Argo CD instance and where Application CRs live.
+    #
+    # ocp_gitops_instance_name:
+    #   Name of the default ArgoCD instance CR (usually "openshift-gitops").
+    ######################################################################
+    ocp_gitops_instance_namespace: "openshift-gitops"
     ocp_gitops_instance_name: "openshift-gitops"
 
-    # Application-specific parameters
+    ######################################################################
+    # Argo CD server ROUTE URL (for human access / argocd CLI)
+    #
+    # IMPORTANT:
+    #   This is the external URL you use in your browser or argocd CLI.
+    #   It is NOT used in the Application spec. The Application spec's
+    #   destination.server should remain "https://kubernetes.default.svc".
+    ######################################################################
+    argocd_server_url: "https://openshift-gitops-server-openshift-gitops.apps.sn05.duncan-networks.com"
+
+    ######################################################################
+    # Application-level settings
+    #
+    # argocd_app_name:
+    #   Name of the Argo CD Application CR. This will appear in the UI.
+    #
+    # argocd_app_project:
+    #   Argo CD Project the app belongs to. "default" is fine initially,
+    #   but you can create custom Projects later for isolation.
+    ######################################################################
     argocd_app_name: "minimal-rest-api-framework-git"
     argocd_app_project: "default"
 
-    # Git repo that Argo CD will track
+    ######################################################################
+    # Git repository information
+    #
+    # argocd_repo_url:
+    #   Git URL for the repo containing your manifests (Kustomize, Helm,
+    #   or plain YAML). Here, you're pointing to the Argo/GitOps repo.
+    #
+    # argocd_repo_path:
+    #   Path inside the repo to the kustomization/helm chart or manifests.
+    #   Examples:
+    #     "."               -> root of repo
+    #     "base"            -> base folder
+    #     "overlays/dev"    -> dev overlay
+    #
+    # argocd_repo_revision:
+    #   Git ref Argo CD should track: branch, tag, or commit.
+    ######################################################################
     argocd_repo_url: "https://bitbucket.org/uconnbitbucket/minimalapi-argo.git"
-    argocd_repo_path: "."          # path within repo (e.g. "overlays/dev")
-    argocd_repo_revision: "main"   # branch, tag, or commit
+    argocd_repo_path: "."
+    argocd_repo_revision: "main"
 
-    # Where to deploy the manifests
+    ######################################################################
+    # Destination cluster and namespace
+    #
+    # argocd_dest_server:
+    #   The Kubernetes API endpoint ArgoCD should apply manifests to.
+    #   INSIDE the cluster, you almost always use:
+    #     "https://kubernetes.default.svc"
+    #
+    # argocd_dest_namespace:
+    #   Target namespace where the app will be deployed (Deployments, Services,
+    #   etc. created by these manifests will live here).
+    ######################################################################
     argocd_dest_server: "https://kubernetes.default.svc"
     argocd_dest_namespace: "its-ssg"
 
-    # Sync policy toggles
+    ######################################################################
+    # Sync policy
+    #
+    # argocd_sync_policy_automated:
+    #   true  -> ArgoCD auto-syncs when repo changes (GitOps-style)
+    #   false -> manual sync only (you click "Sync" in UI)
+    #
+    # argocd_sync_policy_prune:
+    #   When automated=true: whether to delete resources that are
+    #   no longer defined in Git.
+    #
+    # argocd_sync_policy_selfHeal:
+    #   When automated=true: whether ArgoCD should revert "drifted"
+    #   resources back to the Git-defined state.
+    ######################################################################
     argocd_sync_policy_automated: true
     argocd_sync_policy_prune: true
     argocd_sync_policy_selfHeal: true
 
   roles:
+    # Role that creates/updates the Argo CD Application CR
     - ocp_gitops_app
+
+  ########################################################################
+  # Optional extra debug at playbook level (purely informational)
+  ########################################################################
+  post_tasks:
+    - name: "Show Argo CD UI URL for reference"
+      ansible.builtin.debug:
+        msg:
+          - "Argo CD Web UI: {{ argocd_server_url }}"
+          - "Application name: {{ argocd_app_name }}"
+          - "Git repo: {{ argocd_repo_url }} (path={{ argocd_repo_path }}, rev={{ argocd_repo_revision }})"
+          - "Destination: {{ argocd_dest_server }} (namespace={{ argocd_dest_namespace }})"
