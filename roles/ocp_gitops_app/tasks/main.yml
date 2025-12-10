@@ -1,0 +1,99 @@
+---
+###########################################################################
+# 1) Ensure destination namespace exists (optional but handy)
+###########################################################################
+- name: "Ensure destination namespace '{{ argocd_dest_namespace }}' exists"
+  kubernetes.core.k8s:
+    kubeconfig: "{{ ocp_kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ argocd_dest_namespace }}"
+  when: not ansible_check_mode
+
+###########################################################################
+# 2a) Create / update Argo CD Application CR (AUTOMATED sync)
+###########################################################################
+- name: "Create or update Argo CD Application '{{ argocd_app_name }}' (automated sync)"
+  kubernetes.core.k8s:
+    kubeconfig: "{{ ocp_kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata:
+        name: "{{ argocd_app_name }}"
+        namespace: "{{ ocp_gitops_instance_namespace }}"
+        labels:
+          app.kubernetes.io/managed-by: ansible
+          app.kubernetes.io/part-of: openshift-gitops
+      spec:
+        project: "{{ argocd_app_project }}"
+        source:
+          repoURL: "{{ argocd_repo_url }}"
+          path: "{{ argocd_repo_path }}"
+          targetRevision: "{{ argocd_repo_revision }}"
+        destination:
+          server: "{{ argocd_dest_server }}"
+          namespace: "{{ argocd_dest_namespace }}"
+        syncPolicy:
+          automated:
+            prune: "{{ argocd_sync_policy_prune | bool }}"
+            selfHeal: "{{ argocd_sync_policy_selfHeal | bool }}"
+  when:
+    - not ansible_check_mode
+    - argocd_sync_policy_automated | bool
+
+###########################################################################
+# 2b) Create / update Argo CD Application CR (MANUAL sync)
+###########################################################################
+- name: "Create or update Argo CD Application '{{ argocd_app_name }}' (manual sync)"
+  kubernetes.core.k8s:
+    kubeconfig: "{{ ocp_kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata:
+        name: "{{ argocd_app_name }}"
+        namespace: "{{ ocp_gitops_instance_namespace }}"
+        labels:
+          app.kubernetes.io/managed-by: ansible
+          app.kubernetes.io/part-of: openshift-gitops
+      spec:
+        project: "{{ argocd_app_project }}"
+        source:
+          repoURL: "{{ argocd_repo_url }}"
+          path: "{{ argocd_repo_path }}"
+          targetRevision: "{{ argocd_repo_revision }}"
+        destination:
+          server: "{{ argocd_dest_server }}"
+          namespace: "{{ argocd_dest_namespace }}"
+  when:
+    - not ansible_check_mode
+    - not (argocd_sync_policy_automated | bool)
+
+###########################################################################
+# 3) Check mode: show what would be created
+###########################################################################
+- name: "Check mode: show would-be Argo CD Application spec"
+  ansible.builtin.debug:
+    msg:
+      name: "{{ argocd_app_name }}"
+      namespace: "{{ ocp_gitops_instance_namespace }}"
+
+      project: "{{ argocd_app_project }}"
+      repoURL: "{{ argocd_repo_url }}"
+      path: "{{ argocd_repo_path }}"
+      targetRevision: "{{ argocd_repo_revision }}"
+
+      dest_server: "{{ argocd_dest_server }}"
+      dest_namespace: "{{ argocd_dest_namespace }}"
+
+      sync_automated: "{{ argocd_sync_policy_automated }}"
+      sync_prune: "{{ argocd_sync_policy_prune }}"
+      sync_selfHeal: "{{ argocd_sync_policy_selfHeal }}"
+  when: ansible_check_mode
+  changed_when: false

@@ -1,0 +1,25 @@
+---
+# Kubeconfig used to connect to the cluster
+ocp_kubeconfig: "/tmp/ocp-cluster-automation.config"
+
+# GitOps / Argo CD operator instance (from your install role)
+ocp_gitops_instance_namespace: "openshift-gitops"
+ocp_gitops_instance_name: "openshift-gitops"
+
+# Argo CD Application basics
+argocd_app_name: "demo-app"
+argocd_app_project: "default"
+
+# Git source parameters
+argocd_repo_url: "https://example.com/your/repo.git"
+argocd_repo_path: "."
+argocd_repo_revision: "main"
+
+# Destination cluster + namespace for the app
+argocd_dest_server: "https://kubernetes.default.svc"
+argocd_dest_namespace: "demo-namespace"
+
+# Sync policy
+argocd_sync_policy_automated: true
+argocd_sync_policy_prune: true
+argocd_sync_policy_selfHeal: true
