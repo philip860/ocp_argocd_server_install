@@ -28,6 +28,18 @@ argocd_repo_revision: "main"
 argocd_dest_server: "https://kubernetes.default.svc"
 argocd_dest_namespace: "demo-namespace"
 
+###########################################################################
+# Namespace creation behavior
+#
+# create_missing_namespace:
+#   - false (default) -> if argocd_dest_namespace does NOT exist,
+#       the role will FAIL and instruct the user to have a
+#       cluster-admin create it before rerunning.
+#   - true  -> the role will automatically create the namespace
+#       if it is missing.
+###########################################################################
+create_missing_namespace: false
+
 # Sync policy (GitOps behavior)
 argocd_sync_policy_automated: true
 argocd_sync_policy_prune: true
