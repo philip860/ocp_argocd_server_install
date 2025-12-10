@@ -1,6 +1,9 @@
 ---
 ###########################################################################
 # 1) Ensure destination namespace exists (optional but handy)
+#
+# We create the destination namespace if it doesn't exist. This is convenient
+# in automation flows where you want "app + namespace" provisioned together.
 ###########################################################################
 - name: "Ensure destination namespace '{{ argocd_dest_namespace }}' exists"
   kubernetes.core.k8s:
@@ -15,6 +18,9 @@
 
 ###########################################################################
 # 2a) Create / update Argo CD Application CR (AUTOMATED sync)
+#
+# This task runs when argocd_sync_policy_automated is true.
+# It sets spec.syncPolicy.automated with prune/selfHeal flags.
 ###########################################################################
 - name: "Create or update Argo CD Application '{{ argocd_app_name }}' (automated sync)"
   kubernetes.core.k8s:
@@ -31,13 +37,19 @@
           app.kubernetes.io/part-of: openshift-gitops
       spec:
         project: "{{ argocd_app_project }}"
+
+        # Git source definition
         source:
           repoURL: "{{ argocd_repo_url }}"
           path: "{{ argocd_repo_path }}"
           targetRevision: "{{ argocd_repo_revision }}"
+
+        # Where ArgoCD should apply the manifests
         destination:
           server: "{{ argocd_dest_server }}"
           namespace: "{{ argocd_dest_namespace }}"
+
+        # Automated sync policy (GitOps mode)
         syncPolicy:
           automated:
             prune: "{{ argocd_sync_policy_prune | bool }}"
@@ -48,6 +60,10 @@
 
 ###########################################################################
 # 2b) Create / update Argo CD Application CR (MANUAL sync)
+#
+# This task runs when argocd_sync_policy_automated is false.
+# No syncPolicy is set, so you must manually click "Sync" in the ArgoCD UI
+# or use the argocd CLI to sync.
 ###########################################################################
 - name: "Create or update Argo CD Application '{{ argocd_app_name }}' (manual sync)"
   kubernetes.core.k8s:
@@ -64,10 +80,14 @@
           app.kubernetes.io/part-of: openshift-gitops
       spec:
         project: "{{ argocd_app_project }}"
+
+        # Git source definition
         source:
           repoURL: "{{ argocd_repo_url }}"
           path: "{{ argocd_repo_path }}"
           targetRevision: "{{ argocd_repo_revision }}"
+
+        # Where ArgoCD should apply the manifests
         destination:
           server: "{{ argocd_dest_server }}"
           namespace: "{{ argocd_dest_namespace }}"
@@ -77,6 +97,9 @@
 
 ###########################################################################
 # 3) Check mode: show what would be created
+#
+# When you run with --check, we don't create anything; instead we show
+# the effective values that would be used for the Application.
 ###########################################################################
 - name: "Check mode: show would-be Argo CD Application spec"
   ansible.builtin.debug:
