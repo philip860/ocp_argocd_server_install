@@ -84,6 +84,18 @@
     argocd_dest_namespace: "its-ssg"
 
     ######################################################################
+    # Namespace creation behavior
+    #
+    # create_missing_namespace:
+    #   - false (default) -> if argocd_dest_namespace does NOT exist,
+    #       the playbook will FAIL with a clear message telling you to
+    #       have a cluster-admin create it, then rerun the playbook.
+    #   - true  -> if argocd_dest_namespace does NOT exist, the role
+    #       will create it automatically via the k8s module.
+    ######################################################################
+    create_missing_namespace: false
+
+    ######################################################################
     # Sync policy
     #
     # argocd_sync_policy_automated:
